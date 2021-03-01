@@ -58,6 +58,11 @@ var keys = map[Key]string{
 	testGetBoolPropertyFilteredByNamespaceIDKey:       "testGetBoolPropertyFilteredByNamespaceIDKey",
 	testGetBoolPropertyFilteredByTaskQueueInfoKey:     "testGetBoolPropertyFilteredByTaskQueueInfoKey",
 
+	// admin settings
+	// NOTE: admin settings are not guaranteed to be compatible across different versions
+	AdminMatchingNamespaceToPartitionDispatchRate:          "admin.matchingNamespaceToPartitionDispatchRate",
+	AdminMatchingNamespaceTaskqueueToPartitionDispatchRate: "admin.matchingNamespaceTaskqueueToPartitionDispatchRate",
+
 	// system settings
 	EnableVisibilitySampling:               "system.enableVisibilitySampling",
 	AdvancedVisibilityWritingMode:          "system.advancedVisibilityWritingMode",
@@ -95,7 +100,8 @@ var keys = map[Key]string{
 	FrontendESIndexMaxResultWindow:        "frontend.esIndexMaxResultWindow",
 	FrontendHistoryMaxPageSize:            "frontend.historyMaxPageSize",
 	FrontendRPS:                           "frontend.rps",
-	FrontendMaxNamespaceRPSPerInstance:    "frontend.namespacerps",
+	FrontendMaxNamespaceRPSPerInstance:    "frontend.namespaceRPS",
+	FrontendMaxNamespaceCountPerInstance:  "frontend.namespaceCount",
 	FrontendGlobalNamespaceRPS:            "frontend.globalNamespacerps",
 	FrontendHistoryMgrNumConns:            "frontend.historyMgrNumConns",
 	FrontendShutdownDrainDuration:         "frontend.shutdownDrainDuration",
@@ -325,6 +331,11 @@ const (
 	testGetBoolPropertyFilteredByNamespaceIDKey
 	testGetBoolPropertyFilteredByTaskQueueInfoKey
 
+	// AdminMatchingNamespaceToPartitionDispatchRate is the max qps of any task queue partition for a given namespace
+	AdminMatchingNamespaceToPartitionDispatchRate
+	// AdminMatchingNamespaceTaskqueueToPartitionDispatchRate is the max qps of a task queue partition for a given namespace & task queue
+	AdminMatchingNamespaceTaskqueueToPartitionDispatchRate
+
 	// EnableVisibilitySampling is key for enable visibility sampling
 	EnableVisibilitySampling
 	// AdvancedVisibilityWritingMode is key for how to write to advanced visibility
@@ -393,6 +404,8 @@ const (
 	FrontendRPS
 	// FrontendMaxNamespaceRPSPerInstance is workflow namespace rate limit per second
 	FrontendMaxNamespaceRPSPerInstance
+	// FrontendMaxNamespaceCountPerInstance is workflow namespace count limit per second
+	FrontendMaxNamespaceCountPerInstance
 	// FrontendGlobalNamespaceRPS is workflow namespace rate limit per second for the whole cluster
 	FrontendGlobalNamespaceRPS
 	// FrontendHistoryMgrNumConns is for persistence cluster.NumConns

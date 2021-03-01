@@ -165,7 +165,7 @@ func (s *visibilityArchiverSuite) TestQuery_Fail_InvalidVisibilityURI() {
 		Query:       "WorkflowType='type::example' AND CloseTime='2020-02-05T11:00:00Z' AND SearchPrecision='Day'",
 	}
 
-	_, err = visibilityArchiver.Query(ctx, URI, request)
+	_, err = visibilityArchiver.Query(ctx, URI, request, nil)
 	s.Error(err)
 }
 
@@ -213,7 +213,7 @@ func (s *visibilityArchiverSuite) TestQuery_Fail_InvalidQuery() {
 		NamespaceID: "some random namespaceID",
 		PageSize:    10,
 		Query:       "some invalid query",
-	})
+	}, nil)
 	s.Error(err)
 	s.Nil(response)
 }
@@ -240,7 +240,7 @@ func (s *visibilityArchiverSuite) TestQuery_Fail_InvalidToken() {
 		PageSize:      1,
 		NextPageToken: []byte{1, 2, 3},
 	}
-	response, err := visibilityArchiver.Query(context.Background(), URI, request)
+	response, err := visibilityArchiver.Query(context.Background(), URI, request, nil)
 	s.Error(err)
 	s.Nil(response)
 }
@@ -251,7 +251,7 @@ func (s *visibilityArchiverSuite) TestQuery_Success_NoNextPageToken() {
 	s.NoError(err)
 	storageWrapper := connector.NewMockClient(s.controller)
 	storageWrapper.EXPECT().Exist(gomock.Any(), URI, gomock.Any()).Return(false, nil)
-	storageWrapper.EXPECT().QueryWithFilters(gomock.Any(), URI, gomock.Any(), 10, 0, gomock.Any()).Return([]string{"closeTimeout_2020-02-05T09:56:14Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility"}, true, 1, nil).Times(1)
+	storageWrapper.EXPECT().QueryWithFilters(gomock.Any(), URI, gomock.Any(), 10, 0, gomock.Any()).Return([]string{"closeTimeout_2020-02-05T09:56:14Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility"}, true, 1, nil)
 	storageWrapper.EXPECT().Get(gomock.Any(), URI, "test-namespace-id/closeTimeout_2020-02-05T09:56:14Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility").Return([]byte(exampleVisibilityRecord), nil)
 
 	visibilityArchiver := newVisibilityArchiver(s.container, storageWrapper)
@@ -274,12 +274,14 @@ func (s *visibilityArchiverSuite) TestQuery_Success_NoNextPageToken() {
 		Query:       "parsed by mockParser",
 	}
 
-	response, err := visibilityArchiver.Query(ctx, URI, request)
+	response, err := visibilityArchiver.Query(ctx, URI, request, nil)
 	s.NoError(err)
 	s.NotNil(response)
 	s.Nil(response.NextPageToken)
 	s.Len(response.Executions, 1)
-	s.Equal(convertToExecutionInfo(s.expectedVisibilityRecords[0]), response.Executions[0])
+	ei, err := convertToExecutionInfo(s.expectedVisibilityRecords[0], nil)
+	s.NoError(err)
+	s.Equal(ei, response.Executions[0])
 }
 
 func (s *visibilityArchiverSuite) TestQuery_Success_SmallPageSize() {
@@ -290,8 +292,8 @@ func (s *visibilityArchiverSuite) TestQuery_Success_SmallPageSize() {
 	s.NoError(err)
 	storageWrapper := connector.NewMockClient(s.controller)
 	storageWrapper.EXPECT().Exist(gomock.Any(), URI, gomock.Any()).Return(false, nil).Times(2)
-	storageWrapper.EXPECT().QueryWithFilters(gomock.Any(), URI, gomock.Any(), pageSize, 0, gomock.Any()).Return([]string{"closeTimeout_2020-02-05T09:56:14Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility", "closeTimeout_2020-02-05T09:56:15Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility"}, false, 1, nil).Times(1)
-	storageWrapper.EXPECT().QueryWithFilters(gomock.Any(), URI, gomock.Any(), pageSize, 1, gomock.Any()).Return([]string{"closeTimeout_2020-02-05T09:56:16Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility"}, true, 2, nil).Times(1)
+	storageWrapper.EXPECT().QueryWithFilters(gomock.Any(), URI, gomock.Any(), pageSize, 0, gomock.Any()).Return([]string{"closeTimeout_2020-02-05T09:56:14Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility", "closeTimeout_2020-02-05T09:56:15Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility"}, false, 1, nil)
+	storageWrapper.EXPECT().QueryWithFilters(gomock.Any(), URI, gomock.Any(), pageSize, 1, gomock.Any()).Return([]string{"closeTimeout_2020-02-05T09:56:16Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility"}, true, 2, nil)
 	storageWrapper.EXPECT().Get(gomock.Any(), URI, "test-namespace-id/closeTimeout_2020-02-05T09:56:14Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility").Return([]byte(exampleVisibilityRecord), nil)
 	storageWrapper.EXPECT().Get(gomock.Any(), URI, "test-namespace-id/closeTimeout_2020-02-05T09:56:15Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility").Return([]byte(exampleVisibilityRecord), nil)
 	storageWrapper.EXPECT().Get(gomock.Any(), URI, "test-namespace-id/closeTimeout_2020-02-05T09:56:16Z_test-workflow-id_MobileOnlyWorkflow::processMobileOnly_test-run-id.visibility").Return([]byte(exampleVisibilityRecord), nil)
@@ -316,19 +318,25 @@ func (s *visibilityArchiverSuite) TestQuery_Success_SmallPageSize() {
 		Query:       "parsed by mockParser",
 	}
 
-	response, err := visibilityArchiver.Query(ctx, URI, request)
+	response, err := visibilityArchiver.Query(ctx, URI, request, nil)
 	s.NoError(err)
 	s.NotNil(response)
 	s.NotNil(response.NextPageToken)
 	s.Len(response.Executions, 2)
-	s.Equal(convertToExecutionInfo(s.expectedVisibilityRecords[0]), response.Executions[0])
-	s.Equal(convertToExecutionInfo(s.expectedVisibilityRecords[0]), response.Executions[1])
+	ei, err := convertToExecutionInfo(s.expectedVisibilityRecords[0], nil)
+	s.NoError(err)
+	s.Equal(ei, response.Executions[0])
+	ei, err = convertToExecutionInfo(s.expectedVisibilityRecords[0], nil)
+	s.NoError(err)
+	s.Equal(ei, response.Executions[1])
 
 	request.NextPageToken = response.NextPageToken
-	response, err = visibilityArchiver.Query(ctx, URI, request)
+	response, err = visibilityArchiver.Query(ctx, URI, request, nil)
 	s.NoError(err)
 	s.NotNil(response)
 	s.Nil(response.NextPageToken)
 	s.Len(response.Executions, 1)
-	s.Equal(convertToExecutionInfo(s.expectedVisibilityRecords[0]), response.Executions[0])
+	ei, err = convertToExecutionInfo(s.expectedVisibilityRecords[0], nil)
+	s.NoError(err)
+	s.Equal(ei, response.Executions[0])
 }

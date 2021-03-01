@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/metrics"
 	p "go.temporal.io/server/common/persistence"
@@ -38,7 +40,6 @@ import (
 	"go.temporal.io/server/common/resolver"
 	"go.temporal.io/server/common/service/config"
 	"go.temporal.io/server/common/service/dynamicconfig"
-	"golang.org/x/sync/errgroup"
 )
 
 type (
@@ -271,19 +272,23 @@ func (f *factoryImpl) NewExecutionManager(
 
 // NewVisibilityManager returns a new visibility manager
 func (f *factoryImpl) NewVisibilityManager() (p.VisibilityManager, error) {
+	visConfig := f.config.VisibilityConfig
+	if visConfig == nil {
+		return nil, nil
+	}
+
 	ds := f.datastores[storeTypeVisibility]
 	store, err := ds.factory.NewVisibilityStore()
 	if err != nil {
 		return nil, err
 	}
 
-	result := p.NewVisibilityManagerImpl(store, f.logger)
+	result := p.NewVisibilityManagerImpl(store, visConfig.ValidSearchAttributes, f.logger)
 	if ds.ratelimit != nil {
 		result = p.NewVisibilityPersistenceRateLimitedClient(result, ds.ratelimit, f.logger)
 	}
 
-	visConfig := f.config.VisibilityConfig
-	if visConfig != nil && visConfig.EnableSampling() {
+	if visConfig.EnableSampling() {
 		result = p.NewVisibilitySamplingClient(result, visConfig, f.metricsClient, f.logger)
 	}
 	if f.metricsClient != nil {

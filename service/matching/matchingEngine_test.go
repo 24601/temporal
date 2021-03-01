@@ -53,7 +53,6 @@ import (
 	"go.temporal.io/server/api/matchingservice/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	tokenspb "go.temporal.io/server/api/token/v1"
-	"go.temporal.io/server/client/history"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/cache"
 	"go.temporal.io/server/common/log"
@@ -134,7 +133,7 @@ func (s *matchingEngineSuite) newMatchingEngine(
 }
 
 func newMatchingEngine(
-	config *Config, taskMgr persistence.TaskManager, mockHistoryClient history.Client,
+	config *Config, taskMgr persistence.TaskManager, mockHistoryClient historyservice.HistoryServiceClient,
 	logger log.Logger, mockNamespaceCache cache.NamespaceCache,
 ) *matchingEngineImpl {
 	return &matchingEngineImpl{
@@ -594,7 +593,7 @@ func (s *matchingEngineSuite) TestAddThenConsumeActivities() {
 
 func (s *matchingEngineSuite) TestSyncMatchActivities() {
 	// Set a short long poll expiration so we don't have to wait too long for 0 throttling cases
-	s.matchingEngine.config.LongPollExpirationInterval = dynamicconfig.GetDurationPropertyFnFilteredByTaskQueueInfo(50 * time.Millisecond)
+	s.matchingEngine.config.LongPollExpirationInterval = dynamicconfig.GetDurationPropertyFnFilteredByTaskQueueInfo(2 * time.Second)
 
 	runID := uuid.NewRandom().String()
 	workflowID := "workflow1"

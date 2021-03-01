@@ -33,11 +33,11 @@ import (
 	archiverspb "go.temporal.io/server/api/archiver/v1"
 	"go.temporal.io/server/common"
 	carchiver "go.temporal.io/server/common/archiver"
-	"go.temporal.io/server/common/convert"
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/metrics"
 	"go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/primitives/timestamp"
+	"go.temporal.io/server/common/searchattribute"
 )
 
 const (
@@ -112,7 +112,7 @@ func deleteHistoryActivity(ctx context.Context, request ArchiveRequest) (err err
 	}()
 	err = container.HistoryV2Manager.DeleteHistoryBranch(&persistence.DeleteHistoryBranchRequest{
 		BranchToken: request.BranchToken,
-		ShardID:     convert.Int32Ptr(request.ShardID),
+		ShardID:     request.ShardID,
 	})
 	if err == nil {
 		return nil
@@ -149,6 +149,14 @@ func archiveVisibilityActivity(ctx context.Context, request ArchiveRequest) (err
 		logger.Error(carchiver.ArchiveNonRetryableErrorMsg, tag.ArchivalArchiveFailReason("failed to get visibility archiver"), tag.Error(err))
 		return errArchiveVisibilityNonRetryable
 	}
+
+	// It is safe to pass nil to typeMap here because search attributes type must be embedded by caller.
+	searchAttributes, err := searchattribute.Stringify(request.SearchAttributes, nil)
+	if err != nil {
+		logger.Error("Unable to stringify search attributes.", tag.Error(err))
+		return err
+	}
+
 	err = visibilityArchiver.Archive(ctx, URI, &archiverspb.VisibilityRecord{
 		NamespaceId:        request.NamespaceID,
 		Namespace:          request.Namespace,
@@ -161,7 +169,7 @@ func archiveVisibilityActivity(ctx context.Context, request ArchiveRequest) (err
 		Status:             request.Status,
 		HistoryLength:      request.HistoryLength,
 		Memo:               request.Memo,
-		SearchAttributes:   convertSearchAttributesToString(request.SearchAttributes),
+		SearchAttributes:   searchAttributes,
 		HistoryArchivalUri: request.HistoryURI,
 	}, carchiver.GetNonRetryableErrorOption(errArchiveVisibilityNonRetryable))
 	if err == nil {

@@ -216,7 +216,7 @@ func (s *HistoryV2PersistenceSuite) TestReadBranchByPagination() {
 		MaxEventID:    10,
 		PageSize:      4,
 		NextPageToken: nil,
-		ShardID:       convert.Int32Ptr(s.ShardInfo.GetShardId()),
+		ShardID:       s.ShardInfo.GetShardId(),
 	}
 	// first page
 	resp, err := s.HistoryV2Mgr.ReadHistoryBranch(req)
@@ -278,7 +278,7 @@ func (s *HistoryV2PersistenceSuite) TestReadBranchByPagination() {
 		MaxEventID:    21,
 		PageSize:      3,
 		NextPageToken: nil,
-		ShardID:       convert.Int32Ptr(s.ShardInfo.GetShardId()),
+		ShardID:       s.ShardInfo.GetShardId(),
 	}
 
 	// first page
@@ -442,7 +442,7 @@ func (s *HistoryV2PersistenceSuite) TestConcurrentlyCreateAndAppendBranches() {
 
 			// read to verify override success, at this point history is corrupted, missing 7/8, so we should only see 6 events
 			_, err = s.readWithError(branch, 1, 25)
-			_, ok := err.(*serviceerror.Internal)
+			_, ok := err.(*serviceerror.DataLoss)
 			s.Equal(true, ok)
 
 			events = s.read(branch, 1, 7)
@@ -708,7 +708,7 @@ func (s *HistoryV2PersistenceSuite) deleteHistoryBranch(branch []byte) error {
 		var err error
 		err = s.HistoryV2Mgr.DeleteHistoryBranch(&p.DeleteHistoryBranchRequest{
 			BranchToken: branch,
-			ShardID:     convert.Int32Ptr(s.ShardInfo.GetShardId()),
+			ShardID:     s.ShardInfo.GetShardId(),
 		})
 		return err
 	}
@@ -755,7 +755,7 @@ func (s *HistoryV2PersistenceSuite) readWithError(branch []byte, minID, maxID in
 			MaxEventID:    maxID,
 			PageSize:      randPageSize,
 			NextPageToken: token,
-			ShardID:       convert.Int32Ptr(s.ShardInfo.GetShardId()),
+			ShardID:       s.ShardInfo.GetShardId(),
 		})
 		if err != nil {
 			return nil, err
@@ -804,7 +804,7 @@ func (s *HistoryV2PersistenceSuite) append(branch []byte, events []*historypb.Hi
 			BranchToken:   branch,
 			Events:        events,
 			TransactionID: txnID,
-			ShardID:       convert.Int32Ptr(s.ShardInfo.GetShardId()),
+			ShardID:       s.ShardInfo.GetShardId(),
 		})
 		return err
 	}
@@ -829,7 +829,7 @@ func (s *HistoryV2PersistenceSuite) fork(forkBranch []byte, forkNodeID int64) ([
 			ForkBranchToken: forkBranch,
 			ForkNodeID:      forkNodeID,
 			Info:            testForkRunID,
-			ShardID:         convert.Int32Ptr(s.ShardInfo.GetShardId()),
+			ShardID:         s.ShardInfo.GetShardId(),
 		})
 		if resp != nil {
 			bi = resp.NewBranchToken

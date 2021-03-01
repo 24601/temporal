@@ -51,7 +51,6 @@ import (
 	workflowspb "go.temporal.io/server/api/workflow/v1"
 	"go.temporal.io/server/client/admin"
 	"go.temporal.io/server/client/history"
-	"go.temporal.io/server/client/matching"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/cache"
 	"go.temporal.io/server/common/clock"
@@ -64,6 +63,7 @@ import (
 	"go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/persistence/versionhistory"
 	"go.temporal.io/server/common/primitives/timestamp"
+	"go.temporal.io/server/common/searchattribute"
 	serviceerrors "go.temporal.io/server/common/serviceerror"
 	"go.temporal.io/server/common/xdc"
 	"go.temporal.io/server/service/history/configs"
@@ -112,9 +112,10 @@ type (
 		replicationTaskProcessors []ReplicationTaskProcessor
 		publicClient              sdkclient.Client
 		eventsReapplier           nDCEventsReapplier
-		matchingClient            matching.Client
-		rawMatchingClient         matching.Client
+		matchingClient            matchingservice.MatchingServiceClient
+		rawMatchingClient         matchingservice.MatchingServiceClient
 		replicationDLQHandler     replicationDLQHandler
+		searchAttributesValidator *searchattribute.Validator
 	}
 )
 
@@ -141,8 +142,6 @@ var (
 	ErrWorkflowParent = serviceerror.NewNotFound("workflow parent does not match")
 	// ErrDeserializingToken is the error to indicate task token is invalid
 	ErrDeserializingToken = serviceerror.NewInvalidArgument("error deserializing task token")
-	// ErrCancellationAlreadyRequested is the error indicating cancellation for target workflow is already requested
-	ErrCancellationAlreadyRequested = serviceerror.NewCancellationAlreadyRequested("cancellation already requested for this workflow execution")
 	// ErrSignalsLimitExceeded is the error indicating limit reached for maximum number of signal events
 	ErrSignalsLimitExceeded = serviceerror.NewResourceExhausted("exceeded workflow execution limit for signal events")
 	// ErrEventsAterWorkflowFinish is the error indicating server error trying to write events after workflow finish event
@@ -172,13 +171,13 @@ var (
 func NewEngineWithShardContext(
 	shard shard.Context,
 	visibilityMgr persistence.VisibilityManager,
-	matching matching.Client,
-	historyClient history.Client,
+	matching matchingservice.MatchingServiceClient,
+	historyClient historyservice.HistoryServiceClient,
 	publicClient sdkclient.Client,
 	eventNotifier events.Notifier,
 	config *configs.Config,
 	replicationTaskFetchers ReplicationTaskFetchers,
-	rawMatchingClient matching.Client,
+	rawMatchingClient matchingservice.MatchingServiceClient,
 	queueTaskProcessor queueTaskProcessor,
 ) *historyEngineImpl {
 	currentClusterName := shard.GetService().GetClusterMetadata().GetCurrentClusterName()
@@ -250,6 +249,15 @@ func NewEngineWithShardContext(
 		historyCache,
 		logger,
 	)
+
+	historyEngImpl.searchAttributesValidator = searchattribute.NewValidator(
+		logger,
+		config.ValidSearchAttributes,
+		config.SearchAttributesNumberOfKeysLimit,
+		config.SearchAttributesSizeOfValueLimit,
+		config.SearchAttributesTotalSizeLimit,
+	)
+
 	historyEngImpl.workflowTaskHandler = newWorkflowTaskHandlerCallback(historyEngImpl)
 
 	var replicationTaskProcessors []ReplicationTaskProcessor
@@ -507,11 +515,11 @@ func (e *historyEngineImpl) StartWorkflowExecution(
 	namespaceID := namespaceEntry.GetInfo().Id
 
 	request := startRequest.StartRequest
-	err = validateStartWorkflowExecutionRequest(request, e.config.MaxIDLengthLimit())
+	e.overrideStartWorkflowExecutionRequest(namespaceEntry, request, metrics.HistoryStartWorkflowExecutionScope)
+	err = e.validateStartWorkflowExecutionRequest(request, e.config.MaxIDLengthLimit(), namespaceEntry.GetInfo().GetName())
 	if err != nil {
 		return nil, err
 	}
-	e.overrideStartWorkflowExecutionRequest(namespaceEntry, request, metrics.HistoryStartWorkflowExecutionScope)
 
 	workflowID := request.GetWorkflowId()
 	// grab the current context as a lock, nothing more
@@ -1915,11 +1923,11 @@ func (e *historyEngineImpl) SignalWithStartWorkflowExecution(
 	// Start workflow and signal
 	startRequest := e.getStartRequest(namespaceID, sRequest)
 	request := startRequest.StartRequest
-	err = validateStartWorkflowExecutionRequest(request, e.config.MaxIDLengthLimit())
+	e.overrideStartWorkflowExecutionRequest(namespaceEntry, request, metrics.HistorySignalWorkflowExecutionScope)
+	err = e.validateStartWorkflowExecutionRequest(request, e.config.MaxIDLengthLimit(), namespaceEntry.GetInfo().GetName())
 	if err != nil {
 		return nil, err
 	}
-	e.overrideStartWorkflowExecutionRequest(namespaceEntry, request, metrics.HistorySignalWorkflowExecutionScope)
 
 	workflowID := request.GetWorkflowId()
 	// grab the current context as a lock, nothing more
@@ -2253,6 +2261,7 @@ func (e *historyEngineImpl) ResetWorkflowExecution(
 	if baseRunID == "" {
 		baseRunID = currentRunID
 	}
+
 	var currentContext workflowExecutionContext
 	var currentMutableState mutableState
 	var currentReleaseFn releaseWorkflowExecutionFunc
@@ -2529,9 +2538,10 @@ func (e *historyEngineImpl) NotifyNewTimerTasks(
 	}
 }
 
-func validateStartWorkflowExecutionRequest(
+func (e *historyEngineImpl) validateStartWorkflowExecutionRequest(
 	request *workflowservice.StartWorkflowExecutionRequest,
 	maxIDLengthLimit int,
+	namespace string,
 ) error {
 
 	if len(request.GetRequestId()) == 0 {
@@ -2564,8 +2574,14 @@ func validateStartWorkflowExecutionRequest(
 	if len(request.WorkflowType.GetName()) > maxIDLengthLimit {
 		return serviceerror.NewInvalidArgument("WorkflowType exceeds length limit.")
 	}
+	if err := common.ValidateRetryPolicy(request.RetryPolicy); err != nil {
+		return err
+	}
+	if err := e.searchAttributesValidator.ValidateAndLog(request.SearchAttributes, namespace); err != nil {
+		return err
+	}
 
-	return common.ValidateRetryPolicy(request.RetryPolicy)
+	return nil
 }
 
 func (e *historyEngineImpl) overrideStartWorkflowExecutionRequest(

@@ -22,7 +22,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//+build esintegration
+// +build esintegration
 
 // to run locally, make sure kafka and es is running,
 // then run cmd `go test -v ./host -run TestElasticsearchIntegrationSuite -tags esintegration`
@@ -52,12 +52,12 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 
 	"go.temporal.io/server/common"
-	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/elasticsearch"
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/payload"
 	"go.temporal.io/server/common/payloads"
 	"go.temporal.io/server/common/primitives/timestamp"
+	"go.temporal.io/server/common/searchattribute"
 )
 
 const (
@@ -95,7 +95,7 @@ func (s *elasticsearchIntegrationSuite) TearDownSuite() {
 func (s *elasticsearchIntegrationSuite) SetupTest() {
 	// Have to define our overridden assertions in the test setup. If we did it earlier, s.T() will return nil
 	s.Assertions = require.New(s.T())
-	s.testSearchAttributeKey = definition.CustomStringField
+	s.testSearchAttributeKey = searchattribute.CustomStringField
 	s.testSearchAttributeVal = "test value"
 }
 
@@ -110,10 +110,10 @@ func (s *elasticsearchIntegrationSuite) TestListOpenWorkflow() {
 	tl := "es-integration-start-workflow-test-taskqueue"
 	request := s.createStartWorkflowExecutionRequest(id, wt, tl)
 
-	attrValBytes, _ := payload.Encode(s.testSearchAttributeVal)
+	attrPayload, _ := payload.Encode(s.testSearchAttributeVal)
 	searchAttr := &commonpb.SearchAttributes{
 		IndexedFields: map[string]*commonpb.Payload{
-			s.testSearchAttributeKey: attrValBytes,
+			s.testSearchAttributeKey: attrPayload,
 		},
 	}
 	request.SearchAttributes = searchAttr
@@ -144,7 +144,14 @@ func (s *elasticsearchIntegrationSuite) TestListOpenWorkflow() {
 	}
 	s.NotNil(openExecution)
 	s.Equal(we.GetRunId(), openExecution.GetExecution().GetRunId())
-	s.Equal(attrValBytes, openExecution.SearchAttributes.GetIndexedFields()[s.testSearchAttributeKey])
+
+	s.Equal(1, len(openExecution.GetSearchAttributes().GetIndexedFields()))
+	attrPayloadFromResponse, attrExist := openExecution.GetSearchAttributes().GetIndexedFields()[s.testSearchAttributeKey]
+	s.True(attrExist)
+	s.Equal(attrPayload.GetData(), attrPayloadFromResponse.GetData())
+	attrType, typeSet := attrPayloadFromResponse.GetMetadata()[searchattribute.MetadataType]
+	s.True(typeSet)
+	s.True(len(attrType) > 0)
 }
 
 func (s *elasticsearchIntegrationSuite) TestListWorkflow() {
@@ -258,7 +265,15 @@ func (s *elasticsearchIntegrationSuite) TestListWorkflow_SearchAttribute() {
 	descResp, err := s.engine.DescribeWorkflowExecution(NewContext(), descRequest)
 	s.NoError(err)
 	expectedSearchAttributes := getUpsertSearchAttributes()
-	s.Equal(expectedSearchAttributes, descResp.WorkflowExecutionInfo.GetSearchAttributes())
+	s.Equal(len(expectedSearchAttributes.GetIndexedFields()), len(descResp.WorkflowExecutionInfo.GetSearchAttributes().GetIndexedFields()))
+	for attrName, expectedPayload := range expectedSearchAttributes.GetIndexedFields() {
+		respAttr, ok := descResp.WorkflowExecutionInfo.GetSearchAttributes().GetIndexedFields()[attrName]
+		s.True(ok)
+		s.Equal(expectedPayload.GetData(), respAttr.GetData())
+		attrType, typeSet := respAttr.GetMetadata()[searchattribute.MetadataType]
+		s.True(typeSet)
+		s.True(len(attrType) > 0)
+	}
 }
 
 func (s *elasticsearchIntegrationSuite) TestListWorkflow_PageToken() {
@@ -292,7 +307,7 @@ func (s *elasticsearchIntegrationSuite) TestListWorkflow_OrQuery() {
 	request := s.createStartWorkflowExecutionRequest(id, wt, tl)
 
 	// start 3 workflows
-	key := definition.CustomIntField
+	key := searchattribute.CustomIntField
 	attrValBytes, _ := payload.Encode(1)
 	searchAttr := &commonpb.SearchAttributes{
 		IndexedFields: map[string]*commonpb.Payload{
@@ -455,10 +470,10 @@ func (s *elasticsearchIntegrationSuite) TestListWorkflow_OrderBy() {
 			timeVal, _ := payload.Encode(time.Now().UTC())
 			searchAttr := &commonpb.SearchAttributes{
 				IndexedFields: map[string]*commonpb.Payload{
-					definition.CustomIntField:      intVal,
-					definition.CustomDoubleField:   doubleVal,
-					definition.CustomKeywordField:  strVal,
-					definition.CustomDatetimeField: timeVal,
+					searchattribute.CustomIntField:      intVal,
+					searchattribute.CustomDoubleField:   doubleVal,
+					searchattribute.CustomKeywordField:  strVal,
+					searchattribute.CustomDatetimeField: timeVal,
 				},
 			}
 			startRequest.SearchAttributes = searchAttr
@@ -478,7 +493,7 @@ func (s *elasticsearchIntegrationSuite) TestListWorkflow_OrderBy() {
 	pageSize := int32(defaultTestValueOfESIndexMaxResultWindow)
 
 	// order by CloseTime asc
-	query1 := fmt.Sprintf(queryTemplate, wt, definition.CloseTime, asc)
+	query1 := fmt.Sprintf(queryTemplate, wt, searchattribute.CloseTime, asc)
 	var openExecutions []*workflowpb.WorkflowExecutionInfo
 	listRequest := &workflowservice.ListWorkflowExecutionsRequest{
 		Namespace: s.namespace,
@@ -528,17 +543,17 @@ func (s *elasticsearchIntegrationSuite) TestListWorkflow_OrderBy() {
 			s.NoError(err)
 			var v1, v2 interface{}
 			switch searchAttrKey {
-			case definition.CustomIntField:
+			case searchattribute.CustomIntField:
 				v1, _ = prevVal.(json.Number).Int64()
 				v2, _ = currVal.(json.Number).Int64()
 				s.True(v1.(int64) >= v2.(int64))
-			case definition.CustomDoubleField:
+			case searchattribute.CustomDoubleField:
 				v1, _ = prevVal.(json.Number).Float64()
 				v2, _ = currVal.(json.Number).Float64()
 				s.True(v1.(float64) >= v2.(float64))
-			case definition.CustomKeywordField:
+			case searchattribute.CustomKeywordField:
 				s.True(prevVal.(string) >= currVal.(string))
-			case definition.CustomDatetimeField:
+			case searchattribute.CustomDatetimeField:
 				v1, _ = time.Parse(time.RFC3339, prevVal.(string))
 				v2, _ = time.Parse(time.RFC3339, currVal.(string))
 				s.True(v1.(time.Time).After(v2.(time.Time)))
@@ -552,25 +567,25 @@ func (s *elasticsearchIntegrationSuite) TestListWorkflow_OrderBy() {
 	}
 
 	// order by CustomIntField desc
-	field := definition.CustomIntField
+	field := searchattribute.CustomIntField
 	query := fmt.Sprintf(queryTemplate, wt, field, desc)
 	var int1, int2 int
 	testHelper(query, field, int1, int2)
 
 	// order by CustomDoubleField desc
-	field = definition.CustomDoubleField
+	field = searchattribute.CustomDoubleField
 	query = fmt.Sprintf(queryTemplate, wt, field, desc)
 	var double1, double2 float64
 	testHelper(query, field, double1, double2)
 
 	// order by CustomKeywordField desc
-	field = definition.CustomKeywordField
+	field = searchattribute.CustomKeywordField
 	query = fmt.Sprintf(queryTemplate, wt, field, desc)
 	var s1, s2 string
 	testHelper(query, field, s1, s2)
 
 	// order by CustomDatetimeField desc
-	field = definition.CustomDatetimeField
+	field = searchattribute.CustomDatetimeField
 	query = fmt.Sprintf(queryTemplate, wt, field, desc)
 	var t1, t2 time.Time
 	testHelper(query, field, t1, t2)
@@ -875,10 +890,10 @@ func (s *elasticsearchIntegrationSuite) TestUpsertWorkflowExecution() {
 		if commandCount == 0 {
 			commandCount++
 
-			attrValBytes, _ := payload.Encode(s.testSearchAttributeVal)
+			attrValPayload, _ := payload.Encode(s.testSearchAttributeVal)
 			upsertSearchAttr := &commonpb.SearchAttributes{
 				IndexedFields: map[string]*commonpb.Payload{
-					s.testSearchAttributeKey: attrValBytes,
+					s.testSearchAttributeKey: attrValPayload,
 				},
 			}
 			upsertCommand.GetUpsertWorkflowSearchAttributesCommandAttributes().SearchAttributes = upsertSearchAttr
@@ -1001,13 +1016,13 @@ func (s *elasticsearchIntegrationSuite) testListResultForUpsertSearchAttributes(
 				s.NoError(err)
 				s.Equal("another string", searchVal)
 
-				searchValBytes2 := fields[definition.CustomIntField]
+				searchValBytes2 := fields[searchattribute.CustomIntField]
 				var searchVal2 int
 				err = payload.Decode(searchValBytes2, &searchVal2)
 				s.NoError(err)
 				s.Equal(123, searchVal2)
 
-				binaryChecksumsBytes := fields[definition.BinaryChecksums]
+				binaryChecksumsBytes := fields[searchattribute.BinaryChecksums]
 				var binaryChecksums []string
 				err = payload.Decode(binaryChecksumsBytes, &binaryChecksums)
 				s.NoError(err)
@@ -1023,14 +1038,15 @@ func (s *elasticsearchIntegrationSuite) testListResultForUpsertSearchAttributes(
 }
 
 func getUpsertSearchAttributes() *commonpb.SearchAttributes {
-	attrValBytes1, _ := payload.Encode("another string")
-	attrValBytes2, _ := payload.Encode(123)
-	binaryChecksums, _ := payload.Encode([]string{"binary-v1", "binary-v2"})
+	stringAttrPayload, _ := payload.Encode("another string")
+	intAttrPayload, _ := payload.Encode(123)
+	binaryChecksumsPayload, _ := payload.Encode([]string{"binary-v1", "binary-v2"})
+
 	upsertSearchAttr := &commonpb.SearchAttributes{
 		IndexedFields: map[string]*commonpb.Payload{
-			definition.CustomStringField: attrValBytes1,
-			definition.CustomIntField:    attrValBytes2,
-			definition.BinaryChecksums:   binaryChecksums,
+			searchattribute.CustomStringField: stringAttrPayload,
+			searchattribute.CustomIntField:    intAttrPayload,
+			searchattribute.BinaryChecksums:   binaryChecksumsPayload,
 		},
 	}
 	return upsertSearchAttr
@@ -1092,7 +1108,7 @@ func (s *elasticsearchIntegrationSuite) TestUpsertWorkflowExecution_InvalidKey()
 	_, err := poller.PollAndProcessWorkflowTask(false, false)
 	s.Error(err)
 	s.IsType(&serviceerror.InvalidArgument{}, err)
-	s.Equal("BadSearchAttributes: INVALIDKEY is not valid search attribute key", err.Error())
+	s.Equal("BadSearchAttributes: INVALIDKEY is not a valid search attribute name", err.Error())
 
 	historyResponse, err := s.engine.GetWorkflowExecutionHistory(NewContext(), &workflowservice.GetWorkflowExecutionHistoryRequest{
 		Namespace: s.namespace,

@@ -35,12 +35,6 @@ type (
 	// BurstFn returns a int as the RPS
 	BurstFn func() int
 
-	// RateKeyFn returns a float64 as the Rate for the given key
-	RateKeyFn func(key string) float64
-
-	// BurstKeyFn returns a int as the Burst for the given key
-	BurstKeyFn func(key string) int
-
 	// DynamicRateImpl stores the dynamic rate per second for rate limiter
 	DynamicRateImpl struct {
 		rate *atomic.Float64

@@ -22,46 +22,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-package executions
-
-import (
-	"testing"
-
-	"github.com/stretchr/testify/suite"
-
-	"go.temporal.io/server/client/frontend"
-	"go.temporal.io/server/common/log"
-	"go.temporal.io/server/common/metrics"
-	"go.temporal.io/server/common/persistence"
-	"go.temporal.io/server/common/quotas"
-)
+package interceptor
 
 type (
-	ScavengerTestSuite struct {
-		suite.Suite
+	NamespaceGetter interface {
+		GetNamespace() string
 	}
 )
 
-func TestScavengerTestSuite(t *testing.T) {
-	suite.Run(t, new(ScavengerTestSuite))
-}
+func GetNamespace(req interface{}) string {
+	if namespaceGetter, ok := req.(NamespaceGetter); ok {
+		return namespaceGetter.GetNamespace()
+	}
 
-func (s *ScavengerTestSuite) TestShardValidatorInitializedWithProperValues() {
-	var frontendClient frontend.Client
-	var historyDB persistence.HistoryManager
-	var metricsClient metrics.Client
-	var logger log.Logger
-	var execMgrProvider persistence.ExecutionManagerFactory
-	var numHistoryShards int32
-	scavenger := NewScavenger(
-		frontendClient,
-		historyDB,
-		metricsClient,
-		logger,
-		execMgrProvider,
-		numHistoryShards,
-	)
-	var rateLimiter quotas.RateLimiter
-	result := scavenger.shardValidatorFactory(rateLimiter).(*shardValidatorImpl)
-	s.IsType(result.validators[0], newActivityIDValidator())
+	return ""
 }

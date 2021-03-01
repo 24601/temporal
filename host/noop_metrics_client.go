@@ -22,13 +22,34 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-package matching
+package host
 
 import (
-	"go.temporal.io/server/api/matchingservice/v1"
+	"time"
+
+	"github.com/uber-go/tally"
+
+	"go.temporal.io/server/common/metrics"
 )
 
-// Client is the interface exposed by matching service client
-type Client interface {
-	matchingservice.MatchingServiceClient
+type (
+	noopMetricsClient struct{}
+)
+
+func (m noopMetricsClient) IncCounter(scope int, counter int) {}
+
+func (m noopMetricsClient) AddCounter(scope int, counter int, delta int64) {}
+
+func (m noopMetricsClient) StartTimer(scope int, timer int) tally.Stopwatch {
+	panic("Unexpected call to NoopMetricsClient StartTimer")
+}
+
+func (m noopMetricsClient) RecordTimer(scope int, timer int, d time.Duration) {}
+
+func (m noopMetricsClient) RecordDistribution(scope int, timer int, d int) {}
+
+func (m noopMetricsClient) UpdateGauge(scope int, gauge int, value float64) {}
+
+func (m noopMetricsClient) Scope(scope int, tags ...metrics.Tag) metrics.Scope {
+	panic("Unexpected call to NoopMetricsClient Scope")
 }

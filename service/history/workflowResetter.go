@@ -39,10 +39,10 @@ import (
 	"go.temporal.io/server/common/cache"
 	"go.temporal.io/server/common/cluster"
 	"go.temporal.io/server/common/collection"
-	"go.temporal.io/server/common/convert"
 	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/failure"
 	"go.temporal.io/server/common/log"
+	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/primitives/timestamp"
 	"go.temporal.io/server/service/history/shard"
@@ -418,7 +418,7 @@ func (r *workflowResetterImpl) forkAndGenerateBranchToken(
 		ForkBranchToken: forkBranchToken,
 		ForkNodeID:      forkNodeID,
 		Info:            persistence.BuildHistoryGarbageCleanupInfo(namespaceID, workflowID, resetRunID),
-		ShardID:         convert.Int32Ptr(shardID),
+		ShardID:         shardID,
 	})
 	if err != nil {
 		return nil, err
@@ -456,16 +456,21 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 	// TODO change this logic to fetching all workflow [baseWorkflow, currentWorkflow]
 	//  from visibility for better coverage of events eligible for re-application.
 
-	var nextRunID string
-	var err error
-
 	// first special handling the remaining events for base workflow
-	if nextRunID, err = r.reapplyWorkflowEvents(
+	nextRunID, err := r.reapplyWorkflowEvents(
 		resetMutableState,
 		baseRebuildNextEventID,
 		baseNextEventID,
 		baseBranchToken,
-	); err != nil {
+	)
+	switch err.(type) {
+	case nil:
+		// noop
+	case *serviceerror.DataLoss:
+		// log event
+		r.logger.Error("encounter data loss event", tag.WorkflowNamespaceID(namespaceID), tag.WorkflowID(workflowID), tag.WorkflowRunID(baseRunID))
+		return err
+	default:
 		return err
 	}
 
@@ -504,12 +509,20 @@ func (r *workflowResetterImpl) reapplyContinueAsNewWorkflowEvents(
 			return err
 		}
 
-		if nextRunID, err = r.reapplyWorkflowEvents(
+		nextRunID, err = r.reapplyWorkflowEvents(
 			resetMutableState,
 			common.FirstEventID,
 			nextWorkflowNextEventID,
 			nextWorkflowBranchToken,
-		); err != nil {
+		)
+		switch err.(type) {
+		case nil:
+			// noop
+		case *serviceerror.DataLoss:
+			// log event
+			r.logger.Error("encounter data loss event", tag.WorkflowNamespaceID(namespaceID), tag.WorkflowID(workflowID), tag.WorkflowRunID(baseRunID))
+			return err
+		default:
 			return err
 		}
 	}
@@ -593,7 +606,7 @@ func (r *workflowResetterImpl) getPaginationFn(
 			MaxEventID:    nextEventID,
 			PageSize:      nDCDefaultPageSize,
 			NextPageToken: paginationToken,
-			ShardID:       convert.Int32Ptr(r.shard.GetShardID()),
+			ShardID:       r.shard.GetShardID(),
 		})
 		if err != nil {
 			return nil, nil, err

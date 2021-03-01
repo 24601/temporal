@@ -27,12 +27,10 @@ package quotas
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 type (
-	// NamespaceRateLimiterFn returns generate a namespace specific rate limiter
-	NamespaceRateLimiterFn func(namespaceID string) RateLimiter
-
 	// NamespaceMultiStageRateLimiterImpl is a multi stage rate limiter
 	// special built for multi-tenancy
 	NamespaceMultiStageRateLimiterImpl struct {
@@ -65,8 +63,20 @@ func (r *NamespaceMultiStageRateLimiterImpl) Allow(
 	namespaceID string,
 ) bool {
 
+	return r.AllowN(namespaceID, time.Now().UTC(), 1)
+}
+
+// AllowN attempts to allow a request to go through. The method returns
+// immediately with a true or false indicating if the request can make
+// progress
+func (r *NamespaceMultiStageRateLimiterImpl) AllowN(
+	namespaceID string,
+	now time.Time,
+	numToken int,
+) bool {
+
 	rateLimiter := r.getOrInitRateLimiter(namespaceID)
-	return rateLimiter.Allow()
+	return rateLimiter.AllowN(now, numToken)
 }
 
 // Reserve returns a Reservation that indicates how long the caller
@@ -75,8 +85,19 @@ func (r *NamespaceMultiStageRateLimiterImpl) Reserve(
 	namespaceID string,
 ) Reservation {
 
+	return r.ReserveN(namespaceID, time.Now().UTC(), 1)
+}
+
+// ReserveN returns a Reservation that indicates how long the caller
+// must wait before event happen.
+func (r *NamespaceMultiStageRateLimiterImpl) ReserveN(
+	namespaceID string,
+	now time.Time,
+	numToken int,
+) Reservation {
+
 	rateLimiter := r.getOrInitRateLimiter(namespaceID)
-	return rateLimiter.Reserve()
+	return rateLimiter.ReserveN(now, numToken)
 }
 
 // Wait waits till the deadline for a rate limit token to allow the request
@@ -86,8 +107,19 @@ func (r *NamespaceMultiStageRateLimiterImpl) Wait(
 	namespaceID string,
 ) error {
 
+	return r.WaitN(ctx, namespaceID, 1)
+}
+
+// WaitN waits till the deadline for a rate limit token to allow the request
+// to go through.
+func (r *NamespaceMultiStageRateLimiterImpl) WaitN(
+	ctx context.Context,
+	namespaceID string,
+	numToken int,
+) error {
+
 	rateLimiter := r.getOrInitRateLimiter(namespaceID)
-	return rateLimiter.Wait(ctx)
+	return rateLimiter.WaitN(ctx, numToken)
 }
 
 func (r *NamespaceMultiStageRateLimiterImpl) getOrInitRateLimiter(

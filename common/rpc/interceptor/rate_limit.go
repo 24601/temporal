@@ -22,44 +22,59 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-package executions
+package interceptor
 
 import (
-	"testing"
+	"context"
+	"time"
 
-	"github.com/stretchr/testify/suite"
+	"go.temporal.io/api/serviceerror"
+	"google.golang.org/grpc"
 
-	persistencespb "go.temporal.io/server/api/persistence/v1"
+	"go.temporal.io/server/common/quotas"
+)
+
+const (
+	RateLimitDefaultToken = 1
+)
+
+var (
+	RateLimitServerBusy = serviceerror.NewResourceExhausted("service rate limit exceeded")
 )
 
 type (
-	activityIDValidatorTestSuite struct {
-		suite.Suite
+	RateLimitInterceptor struct {
+		rateLimiter quotas.RateLimiter
+		tokens      map[string]int
 	}
 )
 
-func TestActivityIdValidatorTestSuite(t *testing.T) {
-	suite.Run(t, new(activityIDValidatorTestSuite))
+var _ grpc.UnaryServerInterceptor = (*RateLimitInterceptor)(nil).Intercept
+
+func NewRateLimitInterceptor(
+	rate quotas.RateFn,
+	tokens map[string]int,
+) *RateLimitInterceptor {
+	return &RateLimitInterceptor{
+		rateLimiter: quotas.NewDefaultIncomingDynamicRateLimiter(rate),
+		tokens:      tokens,
+	}
 }
 
-func (s *activityIDValidatorTestSuite) TestAIVTReturnsNoCorruptionWhenNoActivitiesPresent() {
-	testData := executionData{mutableState: &persistencespb.WorkflowMutableState{}}
-	result := newActivityIDValidator().validate(&testData)
-	s.True(result.isValid)
-}
+func (i *RateLimitInterceptor) Intercept(
+	ctx context.Context,
+	req interface{},
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (interface{}, error) {
+	_, methodName := splitMethodName(info.FullMethod)
+	token, ok := i.tokens[methodName]
+	if !ok {
+		token = RateLimitDefaultToken
+	}
 
-func (s *activityIDValidatorTestSuite) TestAIVTReturnsNoCorruptionWhenActivityIdsAreValid() {
-	testData := executionData{}
-	testData.mutableState = &persistencespb.WorkflowMutableState{
-		NextEventId: 5, ActivityInfos: map[int64]*persistencespb.ActivityInfo{1: {}, 2: {}}}
-	result := newActivityIDValidator().validate(&testData)
-	s.True(result.isValid)
-}
-
-func (s *activityIDValidatorTestSuite) TestAIVTReturnsFailureInfoOnCorruptActivityId() {
-	testData := executionData{}
-	testData.mutableState = &persistencespb.WorkflowMutableState{
-		NextEventId: 5, ActivityInfos: map[int64]*persistencespb.ActivityInfo{1: {}, 6: {}, 2: {}}}
-	result := newActivityIDValidator().validate(&testData)
-	s.False(result.isValid)
+	if !i.rateLimiter.AllowN(time.Now().UTC(), token) {
+		return nil, RateLimitServerBusy
+	}
+	return handler(ctx, req)
 }

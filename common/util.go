@@ -43,22 +43,19 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 
 	workflowspb "go.temporal.io/server/api/workflow/v1"
+	"go.temporal.io/server/common/metrics"
 
 	"go.temporal.io/server/api/historyservice/v1"
 	"go.temporal.io/server/api/matchingservice/v1"
 	"go.temporal.io/server/common/backoff"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
-	"go.temporal.io/server/common/metrics"
-	"go.temporal.io/server/common/payload"
 	"go.temporal.io/server/common/primitives/timestamp"
 	"go.temporal.io/server/common/service/dynamicconfig"
 	serviceerrors "go.temporal.io/server/common/serviceerror"
 )
 
 const (
-	golandMapReserverNumberOfBytes = 48
-
 	retryPersistenceOperationInitialInterval    = 50 * time.Millisecond
 	retryPersistenceOperationMaxInterval        = 10 * time.Second
 	retryPersistenceOperationExpirationInterval = 30 * time.Second
@@ -78,10 +75,6 @@ const (
 	adminServiceOperationInitialInterval    = 200 * time.Millisecond
 	adminServiceOperationMaxInterval        = 5 * time.Second
 	adminServiceOperationExpirationInterval = 15 * time.Second
-
-	retryKafkaOperationInitialInterval    = 50 * time.Millisecond
-	retryKafkaOperationMaxInterval        = 10 * time.Second
-	retryKafkaOperationExpirationInterval = 30 * time.Second
 
 	retryTaskProcessingInitialInterval = 50 * time.Millisecond
 	retryTaskProcessingMaxInterval     = 100 * time.Millisecond
@@ -146,12 +139,6 @@ func AwaitWaitGroup(wg *sync.WaitGroup, timeout time.Duration) bool {
 	}
 }
 
-// AddSecondsToBaseTime - Gets the UnixNano with given duration and base time.
-func AddSecondsToBaseTime(baseTimeInNanoSec int64, durationInSeconds int64) int64 {
-	timeOut := time.Duration(durationInSeconds) * time.Second
-	return time.Unix(0, baseTimeInNanoSec).Add(timeOut).UnixNano()
-}
-
 // CreatePersistanceRetryPolicy creates a retry policy for persistence layer operations
 func CreatePersistanceRetryPolicy() backoff.RetryPolicy {
 	policy := backoff.NewExponentialRetryPolicy(retryPersistenceOperationInitialInterval)
@@ -197,15 +184,6 @@ func CreateAdminServiceRetryPolicy() backoff.RetryPolicy {
 	return policy
 }
 
-// CreateKafkaOperationRetryPolicy creates a retry policy for kafka operation
-func CreateKafkaOperationRetryPolicy() backoff.RetryPolicy {
-	policy := backoff.NewExponentialRetryPolicy(retryKafkaOperationInitialInterval)
-	policy.SetMaximumInterval(retryKafkaOperationMaxInterval)
-	policy.SetExpirationInterval(retryKafkaOperationExpirationInterval)
-
-	return policy
-}
-
 // CreateTaskProcessingRetryPolicy creates a retry policy for task processing
 func CreateTaskProcessingRetryPolicy() backoff.RetryPolicy {
 	policy := backoff.NewExponentialRetryPolicy(retryTaskProcessingInitialInterval)
@@ -235,11 +213,6 @@ func IsPersistenceTransientError(err error) bool {
 	return false
 }
 
-// IsKafkaTransientError check if the error is a transient kafka error
-func IsKafkaTransientError(err error) bool {
-	return true
-}
-
 // IsServiceTransientError checks if the error is a retryable error.
 func IsServiceTransientError(err error) bool {
 	return !IsServiceNonRetryableError(err)
@@ -251,8 +224,7 @@ func IsServiceNonRetryableError(err error) bool {
 	case *serviceerror.NotFound,
 		*serviceerror.InvalidArgument,
 		*serviceerror.NamespaceNotActive,
-		*serviceerror.WorkflowExecutionAlreadyStarted,
-		*serviceerror.CancellationAlreadyRequested:
+		*serviceerror.WorkflowExecutionAlreadyStarted:
 		return true
 	}
 
@@ -300,7 +272,11 @@ func IsResourceExhausted(err error) bool {
 }
 
 // WorkflowIDToHistoryShard is used to map namespaceID-workflowID pair to a shardID
-func WorkflowIDToHistoryShard(namespaceID, workflowID string, numberOfShards int32) int32 {
+func WorkflowIDToHistoryShard(
+	namespaceID string,
+	workflowID string,
+	numberOfShards int32,
+) int32 {
 	idBytes := []byte(namespaceID + "_" + workflowID)
 	hash := farm.Fingerprint32(idBytes)
 	return int32(hash%uint32(numberOfShards)) + 1 // ShardID starts with 1
@@ -644,76 +620,6 @@ func IsJustOrderByClause(clause string) bool {
 	whereClause := strings.TrimSpace(clause)
 	whereClause = strings.ToLower(whereClause)
 	return strings.HasPrefix(whereClause, "order by")
-}
-
-// ConvertIndexedValueTypeToProtoType takes fieldType as interface{} and convert to IndexedValueType.
-// Because different implementation of dynamic config client may lead to different types
-func ConvertIndexedValueTypeToProtoType(fieldType interface{}, logger log.Logger) enumspb.IndexedValueType {
-	switch t := fieldType.(type) {
-	case float64:
-		return enumspb.IndexedValueType(t)
-	case int:
-		return enumspb.IndexedValueType(t)
-	case string:
-		if ivt, ok := enumspb.IndexedValueType_value[t]; ok {
-			return enumspb.IndexedValueType(ivt)
-		}
-	case enumspb.IndexedValueType:
-		return t
-	}
-
-	// Unknown fieldType, please make sure dynamic config return correct value type
-	logger.Error("unknown index value type", tag.Value(fieldType), tag.ValueType(fieldType))
-	return fieldType.(enumspb.IndexedValueType) // it will panic and been captured by logger
-}
-
-// DeserializeSearchAttributeValue takes json encoded search attribute value and it's type as input, then
-// unmarshal the value into a concrete type and return the value
-func DeserializeSearchAttributeValue(value *commonpb.Payload, valueType enumspb.IndexedValueType) (interface{}, error) {
-	switch valueType {
-	case enumspb.INDEXED_VALUE_TYPE_STRING, enumspb.INDEXED_VALUE_TYPE_KEYWORD:
-		var val string
-		if err := payload.Decode(value, &val); err != nil {
-			var listVal []string
-			err = payload.Decode(value, &listVal)
-			return listVal, err
-		}
-		return val, nil
-	case enumspb.INDEXED_VALUE_TYPE_INT:
-		var val int64
-		if err := payload.Decode(value, &val); err != nil {
-			var listVal []int64
-			err = payload.Decode(value, &listVal)
-			return listVal, err
-		}
-		return val, nil
-	case enumspb.INDEXED_VALUE_TYPE_DOUBLE:
-		var val float64
-		if err := payload.Decode(value, &val); err != nil {
-			var listVal []float64
-			err = payload.Decode(value, &listVal)
-			return listVal, err
-		}
-		return val, nil
-	case enumspb.INDEXED_VALUE_TYPE_BOOL:
-		var val bool
-		if err := payload.Decode(value, &val); err != nil {
-			var listVal []bool
-			err = payload.Decode(value, &listVal)
-			return listVal, err
-		}
-		return val, nil
-	case enumspb.INDEXED_VALUE_TYPE_DATETIME:
-		var val time.Time
-		if err := payload.Decode(value, &val); err != nil {
-			var listVal []time.Time
-			err = payload.Decode(value, &listVal)
-			return listVal, err
-		}
-		return val, nil
-	default:
-		return nil, fmt.Errorf("error: unknown index value type [%v]", valueType)
-	}
 }
 
 // GetDefaultAdvancedVisibilityWritingMode get default advancedVisibilityWritingMode based on

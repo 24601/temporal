@@ -54,7 +54,6 @@ import (
 	"go.temporal.io/server/common/archiver/provider"
 	"go.temporal.io/server/common/cache"
 	"go.temporal.io/server/common/cluster"
-	"go.temporal.io/server/common/convert"
 	"go.temporal.io/server/common/metrics"
 	"go.temporal.io/server/common/mocks"
 	"go.temporal.io/server/common/namespace"
@@ -62,7 +61,6 @@ import (
 	"go.temporal.io/server/common/primitives"
 	"go.temporal.io/server/common/primitives/timestamp"
 	"go.temporal.io/server/common/resource"
-	"go.temporal.io/server/common/service/dynamicconfig"
 	dc "go.temporal.io/server/common/service/dynamicconfig"
 )
 
@@ -925,7 +923,7 @@ func (s *workflowHandlerSuite) TestHistoryArchived() {
 	}
 	s.False(wh.historyArchived(context.Background(), getHistoryRequest, "test-namespace"))
 
-	s.mockHistoryClient.EXPECT().GetMutableState(gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
+	s.mockHistoryClient.EXPECT().GetMutableState(gomock.Any(), gomock.Any()).Return(nil, nil)
 	getHistoryRequest = &workflowservice.GetWorkflowExecutionHistoryRequest{
 		Execution: &commonpb.WorkflowExecution{
 			WorkflowId: testWorkflowID,
@@ -934,7 +932,7 @@ func (s *workflowHandlerSuite) TestHistoryArchived() {
 	}
 	s.False(wh.historyArchived(context.Background(), getHistoryRequest, "test-namespace"))
 
-	s.mockHistoryClient.EXPECT().GetMutableState(gomock.Any(), gomock.Any()).Return(nil, serviceerror.NewNotFound("got archival indication error")).Times(1)
+	s.mockHistoryClient.EXPECT().GetMutableState(gomock.Any(), gomock.Any()).Return(nil, serviceerror.NewNotFound("got archival indication error"))
 	getHistoryRequest = &workflowservice.GetWorkflowExecutionHistoryRequest{
 		Execution: &commonpb.WorkflowExecution{
 			WorkflowId: testWorkflowID,
@@ -943,7 +941,7 @@ func (s *workflowHandlerSuite) TestHistoryArchived() {
 	}
 	s.True(wh.historyArchived(context.Background(), getHistoryRequest, "test-namespace"))
 
-	s.mockHistoryClient.EXPECT().GetMutableState(gomock.Any(), gomock.Any()).Return(nil, errors.New("got non-archival indication error")).Times(1)
+	s.mockHistoryClient.EXPECT().GetMutableState(gomock.Any(), gomock.Any()).Return(nil, errors.New("got non-archival indication error"))
 	getHistoryRequest = &workflowservice.GetWorkflowExecutionHistoryRequest{
 		Execution: &commonpb.WorkflowExecution{
 			WorkflowId: testWorkflowID,
@@ -954,11 +952,11 @@ func (s *workflowHandlerSuite) TestHistoryArchived() {
 }
 
 func (s *workflowHandlerSuite) TestGetArchivedHistory_Failure_NamespaceCacheEntryError() {
-	s.mockNamespaceCache.EXPECT().GetNamespaceByID(gomock.Any()).Return(nil, errors.New("error getting namespace")).Times(1)
+	s.mockNamespaceCache.EXPECT().GetNamespaceByID(gomock.Any()).Return(nil, errors.New("error getting namespace"))
 
 	wh := s.getWorkflowHandler(s.newConfig())
 
-	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID, metrics.NoopScope(metrics.Frontend))
+	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID)
 	s.Nil(resp)
 	s.Error(err)
 }
@@ -978,7 +976,7 @@ func (s *workflowHandlerSuite) TestGetArchivedHistory_Failure_ArchivalURIEmpty()
 
 	wh := s.getWorkflowHandler(s.newConfig())
 
-	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID, metrics.NoopScope(metrics.Frontend))
+	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID)
 	s.Nil(resp)
 	s.Error(err)
 }
@@ -998,7 +996,7 @@ func (s *workflowHandlerSuite) TestGetArchivedHistory_Failure_InvalidURI() {
 
 	wh := s.getWorkflowHandler(s.newConfig())
 
-	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID, metrics.NoopScope(metrics.Frontend))
+	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID)
 	s.Nil(resp)
 	s.Error(err)
 }
@@ -1041,7 +1039,7 @@ func (s *workflowHandlerSuite) TestGetArchivedHistory_Success_GetFirstPage() {
 
 	wh := s.getWorkflowHandler(s.newConfig())
 
-	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID, metrics.NoopScope(metrics.Frontend))
+	resp, err := wh.getArchivedHistory(context.Background(), getHistoryRequest(nil), s.testNamespaceID)
 	s.NoError(err)
 	s.NotNil(resp)
 	s.NotNil(resp.History)
@@ -1064,9 +1062,9 @@ func (s *workflowHandlerSuite) TestGetHistory() {
 		BranchToken:   branchToken,
 		MinEventID:    firstEventID,
 		MaxEventID:    nextEventID,
-		PageSize:      0,
+		PageSize:      1,
 		NextPageToken: []byte{},
-		ShardID:       convert.Int32Ptr(shardID),
+		ShardID:       shardID,
 	}
 	s.mockHistoryMgr.EXPECT().ReadHistoryBranch(req).Return(&persistence.ReadHistoryBranchResponse{
 		HistoryEvents: []*historypb.HistoryEvent{
@@ -1077,12 +1075,21 @@ func (s *workflowHandlerSuite) TestGetHistory() {
 		NextPageToken:    []byte{},
 		Size:             1,
 		LastFirstEventID: nextEventID,
-	}, nil).Times(1)
+	}, nil)
 
 	wh := s.getWorkflowHandler(s.newConfig())
 
-	scope := metrics.NoopScope(metrics.Frontend)
-	history, token, err := wh.getHistory(scope, namespaceID, we, firstEventID, nextEventID, 0, []byte{}, nil, branchToken)
+	history, token, err := wh.getHistory(
+		metrics.NoopScope(metrics.Frontend),
+		namespaceID,
+		we,
+		firstEventID,
+		nextEventID,
+		1,
+		[]byte{},
+		nil,
+		branchToken,
+	)
 	s.NoError(err)
 	s.NotNil(history)
 	s.Equal([]byte{}, token)
@@ -1165,7 +1172,7 @@ func (s *workflowHandlerSuite) TestListArchivedVisibility_Success() {
 		nil,
 	), nil).AnyTimes()
 	s.mockArchivalMetadata.EXPECT().GetVisibilityConfig().Return(archiver.NewArchivalConfig("enabled", dc.GetStringPropertyFn("enabled"), dc.GetBoolPropertyFn(true), "disabled", "random URI")).Times(2)
-	s.mockVisibilityArchiver.EXPECT().Query(gomock.Any(), gomock.Any(), gomock.Any()).Return(&archiver.QueryVisibilityResponse{}, nil)
+	s.mockVisibilityArchiver.EXPECT().Query(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&archiver.QueryVisibilityResponse{}, nil)
 	s.mockArchiverProvider.EXPECT().GetVisibilityArchiver(gomock.Any(), gomock.Any()).Return(s.mockVisibilityArchiver, nil)
 
 	wh := s.getWorkflowHandler(s.newConfig())
@@ -1267,66 +1274,6 @@ func (s *workflowHandlerSuite) TestCountWorkflowExecutions() {
 	countRequest.Query = query
 	_, err = wh.CountWorkflowExecutions(ctx, countRequest)
 	s.NotNil(err)
-}
-
-func (s *workflowHandlerSuite) TestConvertIndexedKeyToProto() {
-	wh := s.getWorkflowHandler(s.newConfig())
-	m := map[string]interface{}{
-		"key1":  float64(1),
-		"key2":  float64(2),
-		"key3":  float64(3),
-		"key4":  float64(4),
-		"key5":  float64(5),
-		"key6":  float64(6),
-		"key1i": 1,
-		"key2i": 2,
-		"key3i": 3,
-		"key4i": 4,
-		"key5i": 5,
-		"key6i": 6,
-		"key1t": enumspb.INDEXED_VALUE_TYPE_STRING,
-		"key2t": enumspb.INDEXED_VALUE_TYPE_KEYWORD,
-		"key3t": enumspb.INDEXED_VALUE_TYPE_INT,
-		"key4t": enumspb.INDEXED_VALUE_TYPE_DOUBLE,
-		"key5t": enumspb.INDEXED_VALUE_TYPE_BOOL,
-		"key6t": enumspb.INDEXED_VALUE_TYPE_DATETIME,
-		"key1s": "String",
-		"key2s": "Keyword",
-		"key3s": "Int",
-		"key4s": "Double",
-		"key5s": "Bool",
-		"key6s": "Datetime",
-	}
-	result := wh.convertIndexedKeyToProto(m)
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_STRING, result["key1"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_KEYWORD, result["key2"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_INT, result["key3"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DOUBLE, result["key4"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_BOOL, result["key5"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DATETIME, result["key6"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_STRING, result["key1i"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_KEYWORD, result["key2i"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_INT, result["key3i"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DOUBLE, result["key4i"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_BOOL, result["key5i"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DATETIME, result["key6i"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_STRING, result["key1t"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_KEYWORD, result["key2t"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_INT, result["key3t"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DOUBLE, result["key4t"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_BOOL, result["key5t"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DATETIME, result["key6t"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_STRING, result["key1s"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_KEYWORD, result["key2s"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_INT, result["key3s"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DOUBLE, result["key4s"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_BOOL, result["key5s"])
-	s.Equal(enumspb.INDEXED_VALUE_TYPE_DATETIME, result["key6s"])
-	s.Panics(func() {
-		wh.convertIndexedKeyToProto(map[string]interface{}{
-			"invalidType": "unknown",
-		})
-	})
 }
 
 func (s *workflowHandlerSuite) TestVerifyHistoryIsComplete() {
@@ -1519,7 +1466,7 @@ func (s *workflowHandlerSuite) setupTokenNamespaceTest(tokenNamespace string, en
 	s.mockHistoryClient.EXPECT().RespondWorkflowTaskFailed(ctx, gomock.Any()).Return(nil, nil).AnyTimes()
 	s.mockMatchingClient.EXPECT().RespondQueryTaskCompleted(ctx, gomock.Any()).Return(nil, nil).AnyTimes()
 	cfg := s.newConfig()
-	cfg.EnableTokenNamespaceEnforcement = dynamicconfig.GetBoolPropertyFn(enforce)
+	cfg.EnableTokenNamespaceEnforcement = dc.GetBoolPropertyFn(enforce)
 	return s.getWorkflowHandler(cfg)
 }
 

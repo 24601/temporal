@@ -33,18 +33,16 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	adminClient "go.temporal.io/server/client/admin"
+	"go.temporal.io/server/api/adminservice/v1"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/archiver"
 	"go.temporal.io/server/common/archiver/filestore"
 	"go.temporal.io/server/common/archiver/provider"
 	"go.temporal.io/server/common/cluster"
-	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/elasticsearch"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/messaging"
-	metricsmocks "go.temporal.io/server/common/metrics/mocks"
 	"go.temporal.io/server/common/mocks"
 	"go.temporal.io/server/common/namespace"
 	"go.temporal.io/server/common/persistence"
@@ -52,6 +50,7 @@ import (
 	persistencetests "go.temporal.io/server/common/persistence/persistence-tests"
 	"go.temporal.io/server/common/persistence/sql/sqlplugin/mysql"
 	"go.temporal.io/server/common/persistence/sql/sqlplugin/postgresql"
+	"go.temporal.io/server/common/searchattribute"
 	"go.temporal.io/server/common/service/config"
 	"go.temporal.io/server/common/service/dynamicconfig"
 )
@@ -86,7 +85,7 @@ type (
 		HistoryConfig         *HistoryConfig
 		ESConfig              *elasticsearch.Config
 		WorkerConfig          *WorkerConfig
-		MockAdminClient       map[string]adminClient.Client
+		MockAdminClient       map[string]adminservice.AdminServiceClient
 	}
 
 	// MessagingClientConfig is the config for messaging config
@@ -173,20 +172,22 @@ func NewCluster(options *TestClusterConfig, logger log.Logger) (*TestCluster, er
 			ESProcessorBulkActions:   dynamicconfig.GetIntPropertyFn(10),
 			ESProcessorBulkSize:      dynamicconfig.GetIntPropertyFn(2 << 20),
 			ESProcessorFlushInterval: dynamicconfig.GetDurationPropertyFn(1 * time.Minute),
-			ValidSearchAttributes:    dynamicconfig.GetMapPropertyFn(definition.GetDefaultIndexedKeys()),
+			ValidSearchAttributes:    dynamicconfig.GetMapPropertyFn(searchattribute.GetDefaultTypeMap()),
 		}
-		esProcessor := pes.NewProcessor(esProcessorConfig, esClient, logger, &metricsmocks.Client{})
+		esProcessor := pes.NewProcessor(esProcessorConfig, esClient, logger, &noopMetricsClient{})
 		esProcessor.Start()
 
 		visConfig := &config.VisibilityConfig{
 			VisibilityListMaxQPS:   dynamicconfig.GetIntPropertyFilteredByNamespace(2000),
 			ESIndexMaxResultWindow: dynamicconfig.GetIntPropertyFn(defaultTestValueOfESIndexMaxResultWindow),
-			ValidSearchAttributes:  dynamicconfig.GetMapPropertyFn(definition.GetDefaultIndexedKeys()),
+			ValidSearchAttributes:  dynamicconfig.GetMapPropertyFn(searchattribute.GetDefaultTypeMap()),
 			ESProcessorAckTimeout:  dynamicconfig.GetDurationPropertyFn(1 * time.Minute),
 		}
 		indexName := options.ESConfig.Indices[common.VisibilityAppName]
-		esVisibilityStore := pes.NewElasticSearchVisibilityStore(esClient, indexName, nil, esProcessor, visConfig, logger, &metricsmocks.Client{})
-		esVisibilityMgr = persistence.NewVisibilityManagerImpl(esVisibilityStore, logger)
+		esVisibilityStore := pes.NewElasticSearchVisibilityStore(
+			esClient, indexName, nil, esProcessor, visConfig, logger, &noopMetricsClient{},
+		)
+		esVisibilityMgr = persistence.NewVisibilityManagerImpl(esVisibilityStore, visConfig.ValidSearchAttributes, logger)
 	}
 	visibilityMgr := persistence.NewVisibilityManagerWrapper(testBase.VisibilityMgr, esVisibilityMgr,
 		dynamicconfig.GetBoolPropertyFnFilteredByNamespace(options.WorkerConfig.EnableIndexer), advancedVisibilityWritingMode)

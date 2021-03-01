@@ -53,7 +53,6 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"go.temporal.io/server/common"
-	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/elasticsearch"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/loggerimpl"
@@ -61,6 +60,7 @@ import (
 	"go.temporal.io/server/common/payload"
 	"go.temporal.io/server/common/payloads"
 	"go.temporal.io/server/common/primitives/timestamp"
+	"go.temporal.io/server/common/searchattribute"
 	"go.temporal.io/server/environment"
 	"go.temporal.io/server/host"
 )
@@ -136,7 +136,7 @@ func (s *esCrossDCTestSuite) SetupSuite() {
 	host.CreateIndex(s.Suite, s.esClient, s.clusterConfigs[0].ESConfig.Indices[common.VisibilityAppName])
 	host.CreateIndex(s.Suite, s.esClient, s.clusterConfigs[1].ESConfig.Indices[common.VisibilityAppName])
 
-	s.testSearchAttributeKey = definition.CustomStringField
+	s.testSearchAttributeKey = searchattribute.CustomStringField
 	s.testSearchAttributeVal = "test value"
 }
 
@@ -187,10 +187,10 @@ func (s *esCrossDCTestSuite) TestSearchAttributes() {
 	identity := "worker1"
 	workflowType := &commonpb.WorkflowType{Name: wt}
 	taskQueue := &taskqueuepb.TaskQueue{Name: tl}
-	attrValBytes, _ := payload.Encode(s.testSearchAttributeVal)
+	attrValPayload, _ := payload.Encode(s.testSearchAttributeVal)
 	searchAttr := &commonpb.SearchAttributes{
 		IndexedFields: map[string]*commonpb.Payload{
-			s.testSearchAttributeKey: attrValBytes,
+			s.testSearchAttributeKey: attrValPayload,
 		},
 	}
 	startReq := &workflowservice.StartWorkflowExecutionRequest{
@@ -236,9 +236,10 @@ func (s *esCrossDCTestSuite) TestSearchAttributes() {
 		}
 		s.NotNil(openExecution)
 		s.Equal(we.GetRunId(), openExecution.GetExecution().GetRunId())
-		searchValBytes := openExecution.SearchAttributes.GetIndexedFields()[s.testSearchAttributeKey]
+		searchValPayload := openExecution.GetSearchAttributes().GetIndexedFields()[s.testSearchAttributeKey]
 		var searchVal string
-		payload.Decode(searchValBytes, &searchVal)
+		err = payload.Decode(searchValPayload, &searchVal)
+		s.NoError(err)
 		s.Equal(s.testSearchAttributeVal, searchVal)
 	}
 
@@ -300,7 +301,7 @@ func (s *esCrossDCTestSuite) TestSearchAttributes() {
 					payload.Decode(searchValBytes, &searchVal)
 					s.Equal("another string", searchVal)
 
-					searchValBytes2 := fields[definition.CustomIntField]
+					searchValBytes2 := fields[searchattribute.CustomIntField]
 					var searchVal2 int
 					payload.Decode(searchValBytes2, &searchVal2)
 					s.Equal(123, searchVal2)
@@ -389,12 +390,12 @@ GetHistoryLoop2:
 }
 
 func getUpsertSearchAttributes() *commonpb.SearchAttributes {
-	attrValBytes1, _ := payload.Encode("another string")
-	attrValBytes2, _ := payload.Encode(123)
+	attrValPayload1, _ := payload.Encode("another string")
+	attrValPayload2, _ := payload.Encode(123)
 	upsertSearchAttr := &commonpb.SearchAttributes{
 		IndexedFields: map[string]*commonpb.Payload{
-			definition.CustomStringField: attrValBytes1,
-			definition.CustomIntField:    attrValBytes2,
+			searchattribute.CustomStringField: attrValPayload1,
+			searchattribute.CustomIntField:    attrValPayload2,
 		},
 	}
 	return upsertSearchAttr
